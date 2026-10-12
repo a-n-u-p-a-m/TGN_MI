@@ -8,41 +8,6 @@ Working synthetically is the central methodological commitment. Running MI on a 
 
 ---
 
-## The task
-
-Binary classification over temporal event sequences on a 50-node graph. A **positive** sample contains a valid `A→B→C` chain: edge `A→B` at time `t₁`, then `B→C` at `t₂`, with `Δt = t₂ − t₁ < 5.0`. A **negative** sample contains the same node triple with the chain broken in one of five ways:
-
-| Corruption | What breaks | What it tests |
-|---|---|---|
-| `topology_break` | `B→C` becomes `D→C` | Is `B`'s identity tracked? |
-| `timing_break` | `t₂` pushed outside the window | Is the threshold learned? |
-| `edge_deletion` | `B→C` replaced by a random edge | Is the completion edge required? |
-| `source_shuffle` | `A→B` becomes `X→B` | Is `A`'s identity tracked? |
-| `temporal_misordering` | `t₁` and `t₂` swapped | Is ordering enforced? |
-
-The node triple is given to the model as candidate nodes, so no search is required.
-
-There is an obvious compositional solution: carry `A`'s identity forward through `B`'s memory, then verify the chain when `B→C` arrives. Whether the model builds that circuit or settles on something else is what the experiments are for.
-
-**Anti-shortcut measures.** A synthetic dataset is only useful here if the model cannot solve it by surface statistic, so the generator carries four defences: ~4× as many noise events as motif events; three distractor edges with correct node pairs but wrong timing; two partial motifs with correct timing but incomplete topology; and degree parity enforcement between positive and negative samples. Sequence length is padded to a fixed 50 events behind a mask so event count carries no signal. `scripts/audit_model.py` verifies the result after training.
-
-## Three design commitments
-
-1. **Hand-rolled GRU** (`models/memory.py`) — explicit `W_z`, `W_r`, `W_h` instead of `nn.GRU`. Slower, but it exposes gate activations and allows clamping them mid-forward-pass, which `nn.GRU` does not permit.
-2. **15 named intervention points** (`models/tgn.py`) — any activation can be replaced on the fly via an `interventions` dict, so every experiment runs against an unmodified forward pass.
-3. **Identity graph embedding** (`models/embedding.py`, 23 lines) — no attention, no message passing. Costs representational power, keeps causal attribution tractable: attention would mix node states into a superposition, and then there is no clean way to trace a behavioural change back to a particular memory update.
-
-The model is 96,841 parameters: GRU 61,824, message MLP 10,304, time encoder 8, classifier 24,705. Intervention keys are `(event_step, point_name)` for per-event points and `(tag, point_name)` for readout/classifier points:
-
-```
-memory_pre_src/dst   time_encoding_src/dst   message_src/dst
-gate_z_t_src/dst     gate_r_t_src/dst
-('readout', 'mem_A'/'mem_B'/'mem_C')
-('classifier', 'classifier_input'/'classifier_hidden')
-```
-
-A second classifier head, the completion-time readout, reads node memories at the decision step (where `B→C` occurs) rather than at the end of the sequence. Both heads train jointly against `L_BCE + 0.5 · L_completion`.
-
 ## Layout
 
 ```
